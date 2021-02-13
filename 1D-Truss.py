@@ -24,9 +24,9 @@ R       Restraint stiffness (kN/m)
 --------------------------------------------------------------------------
 Degrees of freedom
 --------------------------------------------------------------------------
-each node:
+Each node:
 x
-each element:
+Each element:
 x1,x2
 
 --------------------------------------------------------------------------
@@ -39,7 +39,8 @@ The latter method is used here
 
 import numpy as np
 from scipy import linalg as sp_linalg
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
+
 """
 --------------------------------------------------------------------------
 MODEL BUILDER
@@ -71,11 +72,10 @@ class ModelBuilder:
         Defines model global coordinates.
         self = model object, NodeID = node ID, x = x coordinate
         """
-        #self.NodeList.append([NodeID,x]) # Adds node to model list
         self.NodeList[NodeID]=x # Adds node and coord as dict entry
         self.NodeLoadList[NodeID]=0 # Initialises node loads
         self.RestraintList[NodeID]=0 # Initialises node restraints
-        self.NodeDisplList[NodeID]=0
+        self.NodeDisplList[NodeID]=0 # Initialises node displacements
         
     def AddRestraint(self,NodeID,x_res):
         """
@@ -151,7 +151,7 @@ def AsmblGK(Model):
                 LMi=LM(Model,e,ir)
                 GK[LMi-1,LMj-1]+=EK[ir-1,jc-1]
     RestraintList=Model.RestraintList # Extact restraint dict
-        #' adds spring support stiffnesses into matrix
+        # adds spring support stiffnesses into matrix
     for key in RestraintList:
         x_res=RestraintList[key]
         if x_res!='*':
@@ -159,9 +159,7 @@ def AsmblGK(Model):
     return GK
 
 def SubAsmblGK(Model):
-    """Uses GK to obtain GKff, GKfs, ff, Us
-    ideally calculate all submatrices in one function and return list
-    """
+    """Uses GK to obtain GKff, GKfs, GKss, ff, Us"""
         # Import GK and model dicts
     GK=AsmblGK(Model) # Calculates GK
     NodeList=Model.NodeList # Extracts node dict

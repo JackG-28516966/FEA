@@ -2,9 +2,13 @@
 """
 --------------------------------------------------------------------------
 Finite element analysis of 1D Truss Structure
+version 0.002
 --------------------------------------------------------------------------
-Fixed Restraints only
+Restraints entered as rigid '*' or with stiffness (kN/m)
 Units kN, m
+
+Reference text: Fundamentals of Finite Element Analysis by Ioannis 
+Koutromanos
 
 --------------------------------------------------------------------------
 Symbols
@@ -15,6 +19,7 @@ L       Element length (m)
 x1      Node 1 global x coordinate (m)
 x2      Node 2 global x coordinate (m)
 P       Point load (kN)
+R       Restraint stiffness (kN/m)
 
 --------------------------------------------------------------------------
 Degrees of freedom
@@ -72,14 +77,17 @@ class ModelBuilder:
         self.RestraintList[NodeID]=0 # Initialises node restraints
         self.NodeDisplList[NodeID]=0
         
-    def AddRestraint(self,NodeID,xRes):
+    def AddRestraint(self,NodeID,x_res):
         """
         Adds restraints to nodes.
         NodeID = Node number, 
-        xRes = boolean: 0 for fixed, 1 elsewise
+        x_res = '*' for fixed, else give stiffness (kN/m)
         """
-        self.RestraintList[NodeID]+=xRes 
-            # Adds node and boolean restraint to dict
+        if x_res =='*':
+            self.RestraintList[NodeID]=x_res
+        else:
+            self.RestraintList[NodeID]+=x_res
+            # Adds node and restraint to dict
         
     def AddNodeLoad(self,NodeID,P):
         """
@@ -142,6 +150,12 @@ def AsmblGK(Model):
             for ir in range(1,NumEDof+1): # iterates rows
                 LMi=LM(Model,e,ir)
                 GK[LMi-1,LMj-1]+=EK[ir-1,jc-1]
+    RestraintList=Model.RestraintList # Extact restraint dict
+        #' adds spring support stiffnesses into matrix
+    for key in RestraintList:
+        x_res=RestraintList[key]
+        if x_res!='*':
+            GK[key-1,key-1]+=x_res
     return GK
 
 def SubAsmblGK(Model):
@@ -165,12 +179,12 @@ def SubAsmblGK(Model):
     GKfs=np.zeros((GKffShape,GKfsShape))
     GKss=np.zeros((GKfsShape,GKfsShape))
         # Calculate associated knowns matrices Us and ff
-    UsNodes=[] # 
+    UsNodes=[]  
     Us=[] # known displacements
     UfNodes=[]
     ff=[] # free node forces
     for NodeID in NodeList: # iterate global node ID keys
-        if RestraintList[NodeID]==0: # if unrestrained
+        if RestraintList[NodeID]!='*': # if unrestrained
             UfNodes.append(NodeID)
             ff.append(NodeLoadList[NodeID])
         else: # if restrained
@@ -211,29 +225,6 @@ def SubAsmblGK(Model):
     ff=np.array(ff)
     return [GKff,GKfs,GKsf,GKss,ff,Us,UfNodes,UsNodes]
 
-
-def AsmblGKff(Model):
-    """Assembles global stiffness matrix GKff"""
-    NodeDof=1 # Number of dof per node
-    NumENodes=2 # Number of element nodes   
-    NumEDof=NodeDof*NumENodes # Number of element dof
-    Uf=(Uf_Gen(Model)) # Returns free node dict with zeros
-    Ufvals=np.array(list(Uf.values())) # Free node index values
-    Uff=Ufvals[Ufvals!=0] # Remove zero values
-    Numff=len(Uff) # Calculate shape of Kff (unknowns matrix)
-    GKff=np.zeros((Numff,Numff)) # Initialise Kff
-    for e in Model.ElemList: # iterates through elements
-        EK=np.array(e.EK) # extracts element stiffness matrix
-        for jc in range(1,NumEDof+1): # iterates columns
-            IDj=ID(Model,LM(Model,e,jc))
-            if IDj>0:
-                for ir in range(1,NumEDof+1): # iterates rows
-                    IDi=ID(Model,LM(Model,e,ir))
-                    if IDi>0:
-                        IDj=ID(Model,LM(Model,e,jc))
-                        GKff[IDi-1,IDj-1]+=EK[ir-1,jc-1]
-    return GKff
-
 def ID(Model,node):
     """Calculates the ID matrix"""
     Uf=Uf_Gen(Model)
@@ -247,7 +238,7 @@ def Uf_Gen(Model):
     FreeNodeIndex=1 # Initialise free node count
     for i in range(1,len(NodeList)+1):
         xR=RestraintList[i] # Extract restraint condition
-        if xR==0: # If unrestrained
+        if xR!='*': # If unrestrained
             FreeNodeList[i]=FreeNodeIndex # Add to free node dict
             FreeNodeIndex+=1 # Update free node count    
         else:
@@ -270,11 +261,12 @@ def LM(Model,ElemE,dof):
     return LMval
        
 
-def Solver1(Model):
+def Solver(Model):
     """Solves linear equations using SciPy linalg"""
     MatrixList=SubAsmblGK(Model) 
     # Outputs[GKff,GKfs,GKsf,GKss,ff,Us,UfNodes,UsNodes]
         # Extract matrices for solving
+    GlobalNodeList=Model.NodeList
     GKff=MatrixList[0]
     GKfs=MatrixList[1]
     GKsf=MatrixList[2]
@@ -291,7 +283,31 @@ def Solver1(Model):
         # Calculate reactions
     Uf=np.reshape(Uf,(-1,1))
     fs=np.dot(GKsf,Uf)+np.dot(GKss,Us)
-    print(fs)
+        # Create nodal dictionaries to contain results
+    NodeReaction={}
+    AllNodeF={}
+    NodeDispl={}
+    AllNodeDispl={}
+    for k in GlobalNodeList: # initialise result dicts with keys and zero vals
+        NodeReaction[k]=0
+        AllNodeF[k]=0
+        NodeDispl[k]=0
+        AllNodeDispl[k]=0
+    for i in range(0,len(UfNodes)): # iterate free result nodes
+        NodeID=UfNodes[i]
+        uf=Uf[i][0]
+        NodeDispl[NodeID]+=uf
+        AllNodeDispl[NodeID]+=uf
+        f_x=ff[i]
+        AllNodeF[NodeID]+=f_x
+    for j in range(0,len(UsNodes)): # iterate support reaction results    
+        NodeID=UsNodes[j]
+        us=Us[j]
+        AllNodeDispl[NodeID]+=us
+        r_x=fs[j][0]
+        NodeReaction[NodeID]+=r_x
+        AllNodeF[NodeID]+=r_x
+    return [AllNodeDispl,AllNodeF]
 
 """
 --------------------------------------------------------------------------
@@ -315,14 +331,13 @@ Elem1=TrussElement(1,2e8,0.005,0,5)
 Elem2=TrussElement(2,2e8,0.01,5,9)
 Elem3=TrussElement(3,2e8,0.0025,9,14)
 "Define Restraints"
-Res1=ModelBuilder.AddRestraint(Model1,3,1)
+Res1=ModelBuilder.AddRestraint(Model1,3,'*')
+Res2=ModelBuilder.AddRestraint(Model1,2,10)
 "Define Prescribed Displacements"
 Displ1=ModelBuilder.AddNodeDispl(Model1,3,0.00002)
 "Define Loading"
 P1=ModelBuilder.AddNodeLoad(Model1,4,10)
 
-Solver1(Model1)
-
-print(AsmblGK(Model1))
-#print(AsmblGKff(Model1))
+#print(AsmblGK(Model1))
 #print(SubAsmblGK(Model1))
+print(Solver(Model1))

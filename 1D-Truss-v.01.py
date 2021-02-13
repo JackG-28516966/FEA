@@ -47,6 +47,7 @@ class ModelBuilder:
         self.NodeList={} # Takes {NodeID:x} entries
         self.RestraintList={} # Takes {NodeID:restraint} entries
         self.NodeLoadList={} # Takes {NodeID:P} entries
+        self.NodeDisplList={} # Takes {NodeID:presrcibed displacement} entries
     
     def AddElement(self,ElemID,E,A,x1,x2):
         """
@@ -66,6 +67,7 @@ class ModelBuilder:
         self.NodeList[NodeID]=x # Adds node and coord as dict entry
         self.NodeLoadList[NodeID]=0 # Initialises node loads
         self.RestraintList[NodeID]=0 # Initialises node restraints
+        self.NodeDisplList[NodeID]=0
         
     def AddRestraint(self,NodeID,xRes):
         """
@@ -73,16 +75,24 @@ class ModelBuilder:
         NodeID = Node number, 
         xRes = boolean: 0 for fixed, 1 elsewise
         """
-        self.RestraintList[NodeID]=xRes # Adds node and boolean restraint to dict
+        self.RestraintList[NodeID]+=xRes 
+            # Adds node and boolean restraint to dict
         
     def AddNodeLoad(self,NodeID,P):
         """
         Adds nodal load.
         self = model object, NodeID = applied node, P = point load.
         """
-        self.NodeLoadList[NodeID]=self.NodeLoadList[NodeID]+P
+        self.NodeLoadList[NodeID]+=P
             # Adds load to node in dict
-
+    
+    def AddNodeDispl(self,NodeID,u):
+        """
+        Adds prescribed nodal displacements
+        self = model object, NodeID = node, u = prescribed displacement
+        """
+        self.NodeDisplList[NodeID]+=u # Adds prescribed displ to node in dict
+        
 """
 --------------------------------------------------------------------------
 ELEMENT BUILDER
@@ -130,6 +140,64 @@ def AsmblGK(Model):
                 LMi=LM(Model,e,ir)
                 GK[LMi-1,LMj-1]+=EK[ir-1,jc-1]
     return GK
+
+def SubAsmblGK(Model):
+    """Uses GK to obtain GKff, GKfs, ff, Us
+    ideally calculate all submatrices in one function and return list
+    """
+        # Import GK and model dicts
+    GK=AsmblGK(Model) # Calculates GK
+    NodeList=Model.NodeList # Extracts node dict
+    RestraintList=Model.RestraintList # Extracts restraint dict
+    NodeDisplList=Model.NodeDisplList # Extracts prescribed displ
+    NodeLoadList=Model.NodeLoadList # Extracts nodal loads
+        # Calculate submatrix shapes
+    Uf=(Uf_Gen(Model)) # Returns free node dict with zeros
+    Ufvals=np.array(list(Uf.values())) # Free node index values
+    Uff=Ufvals[Ufvals!=0] # Remove zero values
+    GKffShape=len(Uff) # Calculate shape of Kff (unknowns matrix)    
+    GKfsShape=len(GK)-GKffShape
+        # Initialise GK submatrices
+    GKff=np.zeros((GKffShape,GKffShape))
+    GKfs=np.zeros((GKffShape,GKfsShape))
+        # Calculate associated knowns matrices Us and ff
+    UsNodes=[] # 
+    Us=[] # known displacements
+    UfNodes=[]
+    ff=[] # free node forces
+    for NodeID in NodeList: # iterate global node ID keys
+        if RestraintList[NodeID]==0: # if unrestrained
+            UfNodes.append(NodeID)
+            ff.append(NodeLoadList[NodeID])
+        else: # if restrained
+            UsNodes.append(NodeID)
+            Us.append(NodeDisplList[NodeID])
+        
+        # Calculate GK submatrix GKfs
+    for col in range(0,GKfsShape):
+        for row in range(0,GKffShape):
+            rowVal=UfNodes[row]-1
+            colVal=UsNodes[col]-1
+            GKfs[row,col]=GK[rowVal,colVal]
+    UsNodes=np.array(UsNodes)
+    Us=np.array(Us)
+    UfNodes=np.array(UfNodes)
+    ff=np.array(ff)
+        # Calculate GK submatrix GKff
+    NodeDof=1 # Number of dof per node
+    NumENodes=2 # Number of element nodes   
+    NumEDof=NodeDof*NumENodes # Number of element dof
+    for e in Model.ElemList: # iterates through elements
+        EK=np.array(e.EK) # extracts element stiffness matrix
+        for jc in range(1,NumEDof+1): # iterates columns
+            IDj=ID(Model,LM(Model,e,jc))
+            if IDj>0:
+                for ir in range(1,NumEDof+1): # iterates rows
+                    IDi=ID(Model,LM(Model,e,ir))
+                    if IDi>0:
+                        IDj=ID(Model,LM(Model,e,jc))
+                        GKff[IDi-1,IDj-1]+=EK[ir-1,jc-1]    
+    return [GKff,GKfs,ff,Us,UfNodes,UsNodes]
 
 
 def AsmblGKff(Model):
@@ -190,8 +258,8 @@ def LM(Model,ElemE,dof):
     return LMval
        
 
-def Solve(Model1):
-    """Solves model"""
+def GaussianSolve(Model1):
+    """Solves model - create Gaussian elimination"""
     
 
 """
@@ -218,7 +286,8 @@ Elem3=TrussElement(3,2e8,0.0025,9,14)
 "Define Restraints"
 Res1=ModelBuilder.AddRestraint(Model1,3,1)
 "Define Loading"
-P1=ModelBuilder.AddNodeLoad(Model1,3,10)
+P1=ModelBuilder.AddNodeLoad(Model1,4,10)
 
-print(AsmblGKff(Model1))
 print(AsmblGK(Model1))
+print(AsmblGKff(Model1))
+print(SubAsmblGK(Model1))

@@ -17,10 +17,12 @@ x2      Node 2 global x coordinate (m)
 P       Point load (kN)
 
 --------------------------------------------------------------------------
-Element degrees of freedom
+Degrees of freedom
 --------------------------------------------------------------------------
-dof=1   x1
-dof=2   x2
+each node:
+x
+each element:
+x1,x2
 
 --------------------------------------------------------------------------
 Notes
@@ -31,7 +33,8 @@ The latter method is used here
 """
 
 import numpy as np
-
+from scipy import linalg as sp_linalg
+import matplotlib.pyplot as plt
 """
 --------------------------------------------------------------------------
 MODEL BUILDER
@@ -160,6 +163,7 @@ def SubAsmblGK(Model):
         # Initialise GK submatrices
     GKff=np.zeros((GKffShape,GKffShape))
     GKfs=np.zeros((GKffShape,GKfsShape))
+    GKss=np.zeros((GKfsShape,GKfsShape))
         # Calculate associated knowns matrices Us and ff
     UsNodes=[] # 
     Us=[] # known displacements
@@ -172,17 +176,20 @@ def SubAsmblGK(Model):
         else: # if restrained
             UsNodes.append(NodeID)
             Us.append(NodeDisplList[NodeID])
-        
+        # Calculate GK submatrix GKss
+    for col in range(0,GKfsShape):
+        for row in range(0,GKfsShape):
+            rowVal=UsNodes[row]-1
+            colVal=UsNodes[col]-1
+            GKss[row,col]=GK[rowVal,colVal]            
         # Calculate GK submatrix GKfs
     for col in range(0,GKfsShape):
         for row in range(0,GKffShape):
             rowVal=UfNodes[row]-1
             colVal=UsNodes[col]-1
             GKfs[row,col]=GK[rowVal,colVal]
-    UsNodes=np.array(UsNodes)
-    Us=np.array(Us)
-    UfNodes=np.array(UfNodes)
-    ff=np.array(ff)
+        # Calculate GK submatrix GKsf
+    GKsf=np.transpose(GKfs)
         # Calculate GK submatrix GKff
     NodeDof=1 # Number of dof per node
     NumENodes=2 # Number of element nodes   
@@ -197,7 +204,12 @@ def SubAsmblGK(Model):
                     if IDi>0:
                         IDj=ID(Model,LM(Model,e,jc))
                         GKff[IDi-1,IDj-1]+=EK[ir-1,jc-1]    
-    return [GKff,GKfs,ff,Us,UfNodes,UsNodes]
+    #   Convert result lists in numpy arrays
+    UsNodes=np.array(UsNodes)
+    Us=np.array(Us)
+    UfNodes=np.array(UfNodes)
+    ff=np.array(ff)
+    return [GKff,GKfs,GKsf,GKss,ff,Us,UfNodes,UsNodes]
 
 
 def AsmblGKff(Model):
@@ -258,9 +270,28 @@ def LM(Model,ElemE,dof):
     return LMval
        
 
-def GaussianSolve(Model1):
-    """Solves model - create Gaussian elimination"""
-    
+def Solver1(Model):
+    """Solves linear equations using SciPy linalg"""
+    MatrixList=SubAsmblGK(Model) 
+    # Outputs[GKff,GKfs,GKsf,GKss,ff,Us,UfNodes,UsNodes]
+        # Extract matrices for solving
+    GKff=MatrixList[0]
+    GKfs=MatrixList[1]
+    GKsf=MatrixList[2]
+    GKss=MatrixList[3]
+    ff=MatrixList[4]
+    Us=MatrixList[5]
+    UfNodes=MatrixList[6]
+    UsNodes=MatrixList[7]
+        # Calculate Pf (free node forces including prescribed displ)
+    mult1=np.dot(GKfs,Us)
+    Pf=ff-mult1
+        # Use SciPy linalg to obtain free node displacements
+    Uf=sp_linalg.solve(GKff,Pf)
+        # Calculate reactions
+    Uf=np.reshape(Uf,(-1,1))
+    fs=np.dot(GKsf,Uf)+np.dot(GKss,Us)
+    print(fs)
 
 """
 --------------------------------------------------------------------------
@@ -285,9 +316,13 @@ Elem2=TrussElement(2,2e8,0.01,5,9)
 Elem3=TrussElement(3,2e8,0.0025,9,14)
 "Define Restraints"
 Res1=ModelBuilder.AddRestraint(Model1,3,1)
+"Define Prescribed Displacements"
+Displ1=ModelBuilder.AddNodeDispl(Model1,3,0.00002)
 "Define Loading"
 P1=ModelBuilder.AddNodeLoad(Model1,4,10)
 
+Solver1(Model1)
+
 print(AsmblGK(Model1))
-print(AsmblGKff(Model1))
-print(SubAsmblGK(Model1))
+#print(AsmblGKff(Model1))
+#print(SubAsmblGK(Model1))

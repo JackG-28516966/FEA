@@ -1,2 +1,2 @@
 # FEA
-Code for finite element analysis
+Code developed for finite element analysis

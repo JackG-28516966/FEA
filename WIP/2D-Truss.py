@@ -43,6 +43,7 @@ The latter method is used here
 
 import numpy as np
 from scipy import linalg as sp_linalg
+import scipy.sparse.linalg as splinalg
 # import matplotlib.pyplot as plt
 
 """
@@ -210,7 +211,6 @@ def SubAsmblGK(Model):
     GKfs=np.zeros((GKffShape,GKfsShape))
     GKss=np.zeros((GKfsShape,GKfsShape))
         # Calculate associated knowns matrices Us and ff
-      
     Us=[] # known displacements
     UsDOFs=[] # global dofs of Us
     ff=[] # free node forces
@@ -260,15 +260,15 @@ def SubAsmblGK(Model):
         # Calculate GK submatrix GKsf
     GKsf=np.transpose(GKfs)
         # Calculate GK submatrix GKff
-    NodeDof=1 # Number of dof per node
+    NodeDof=2 # Number of dof per node
     NumENodes=2 # Number of element nodes   
     NumEDof=NodeDof*NumENodes # Number of element dof
     for e in Model.ElemList: # iterates through elements
         EK=np.array(e.EK) # extracts element stiffness matrix
-        for jc in range(1,NumEDof+1): # iterates columns
+        for jc in range(1,NumEDof+1): # iterates columns EK
             IDj=ID(Model,LM(Model,e,jc))
             if IDj>0:
-                for ir in range(1,NumEDof+1): # iterates rows
+                for ir in range(1,NumEDof+1): # iterates rows EK
                     IDi=ID(Model,LM(Model,e,ir))
                     if IDi>0:
                         IDj=ID(Model,LM(Model,e,jc))
@@ -357,18 +357,10 @@ def Solver(Model):
         # Calculate Pf (free node forces including prescribed displ)
     mult1=np.dot(GKfs,Us)
     Pf=ff-mult1
-    Pf=np.reshape(Pf,(-1,1)) # make column vector
         # Use SciPy linalg to obtain free node displacements
-    print("GKff",GKff,np.shape(GKff))
-    print("Pf",np.shape(Pf))
-    print("cond",np.linalg.cond(GKff))
-    print("det",np.linalg.det(GKff))
-    print("inv",np.linalg.inv(GKff))
     Uf=sp_linalg.solve(GKff,Pf)
-    print("Uf",np.shape(Uf))
         # Calculate reactions
     fs=np.dot(GKsf,Uf)+np.dot(GKss,Us)
-    print("fs",np.shape(fs))
         # Associate results with nodes {NodeID:[dof1,dof2]}
     NodeReactions={}
     NodeDisplacements={}
@@ -388,7 +380,7 @@ def Solver(Model):
                 NodeDisplacements[key][0]+=Uf[j]
             elif UfDOFs[j]==g_dof2:
                 NodeDisplacements[key][1]+=Uf[j]
-    return Uf
+    return NodeReactions
 
 """
 --------------------------------------------------------------------------
@@ -407,8 +399,8 @@ Node3=ModelBuilder.AddNode(Model1,3,0,80)
 AddElem1=ModelBuilder.AddElement(Model1,1,3e4,1,1,2)
 AddElem2=ModelBuilder.AddElement(Model1,2,3e4,2,2,3)
 #AddElem3=ModelBuilder.AddElement(Model1,1,2e8,0.0025,1,3)
-#Elem1=TrussElement(1,3e4,1,0,0,120,0)
-#Elem2=TrussElement(2,3e4,2,120,0,0,80)
+Elem1=TrussElement(1,3e4,1,0,0,120,0)
+Elem2=TrussElement(2,3e4,2,120,0,0,80)
 "Define Restraints"
 Res1=ModelBuilder.AddRestraint(Model1,1,'*','*')
 Res2=ModelBuilder.AddRestraint(Model1,3,'*','*')
@@ -417,6 +409,8 @@ Res2=ModelBuilder.AddRestraint(Model1,3,'*','*')
 "Define Loading"
 P1=ModelBuilder.AddNodeLoad(Model1,2,0,-10)
 
-
+print("GK",AsmblGK(Model1))
+print("EK1",Elem1.EK)
+print("EK2",Elem2.EK)
 print('----------------------------------------------')
 print(Solver(Model1))

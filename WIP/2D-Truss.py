@@ -57,7 +57,7 @@ class ModelBuilder:
         """Collects model objects and properties for each instance"""
         self.ModelID=ModelID # Allows for multiple model instances
         self.ElemList=[] # List of element objects within model
-        self.NodeList={} # Takes {NodeID:[x,y] coords} 
+        self.NodeCoords={} # Takes {NodeID:[x,y] coords} 
         self.RestraintList={} # Takes {NodeID:[x,y]restraint} 
         self.NodeLoadList={} # Takes {NodeID:[Px,Py]force} 
         self.NodeDisplList={} # Takes {NodeID:[x,y]prescribed displacement} 
@@ -70,10 +70,10 @@ class ModelBuilder:
         section area, L = length, x1 = x coordinate 1, y1 = y coordinate 1
         x2 = x coordinate 2, y2 = y coordinate 2
         """
-        x1=self.NodeList[Node1][0]
-        y1=self.NodeList[Node1][1]
-        x2=self.NodeList[Node2][0]
-        y2=self.NodeList[Node2][1]
+        x1=self.NodeCoords[Node1][0]
+        y1=self.NodeCoords[Node1][1]
+        x2=self.NodeCoords[Node2][0]
+        y2=self.NodeCoords[Node2][1]
         ElemObj=TrussElement(ElemID,E,A,x1,y1,x2,y2) # Creates element
         self.ElemList.append(ElemObj) # Adds element to model list
 
@@ -83,7 +83,7 @@ class ModelBuilder:
         self = model object, NodeID = node ID, x = x coordinate, 
         y = y coordinate
         """
-        self.NodeList[NodeID]=[x,y] # Adds node and coord as dict entry
+        self.NodeCoords[NodeID]=[x,y] # Adds node and coord as dict entry
         self.NodeLoadList[NodeID]=[0,0] # Initialises node loads
         self.RestraintList[NodeID]=[0,0] # Initialises node restraints
         self.NodeDisplList[NodeID]=[0,0] # Initialises node displacements
@@ -167,7 +167,7 @@ def AsmblGK(Model):
     NodeDof=2 # Number of dof per node
     NumENodes=2 # Number of element nodes   
     NumEDof=NodeDof*NumENodes # Number of element dof
-    NumGNodes=len(Model.NodeList) # Number of global nodes
+    NumGNodes=len(Model.NodeCoords) # Number of global nodes
     NumGDof=NumGNodes*NodeDof # Number of global dof
     GK=np.zeros((NumGDof,NumGDof))
     for e in Model.ElemList: # iterates through elements
@@ -194,7 +194,7 @@ def SubAsmblGK(Model):
     """Uses GK to obtain GKff, GKfs, GKss, ff, Us"""
         # Import GK and model dicts
     GK=AsmblGK(Model) # Calculates GK
-    NodeList=Model.NodeList # Extracts node dict
+    NodeCoords=Model.NodeCoords # Extracts node dict
     RestraintList=Model.RestraintList # Extracts restraint dict
     NodeDisplList=Model.NodeDisplList # Extracts prescribed displ
     NodeLoadList=Model.NodeLoadList # Extracts nodal loads
@@ -210,11 +210,13 @@ def SubAsmblGK(Model):
     GKfs=np.zeros((GKffShape,GKfsShape))
     GKss=np.zeros((GKfsShape,GKfsShape))
         # Calculate associated knowns matrices Us and ff
-    UsDOFs=[]  
+      
     Us=[] # known displacements
-    UfDOFs=[]
+    UsDOFs=[] # global dofs of Us
     ff=[] # free node forces
-    for NodeID in NodeList: # iterate global node ID keys
+    UfDOFs=[] # global dofs of Uf
+    for NodeID in NodeCoords: # iterate global node ID keys
+        # extract all dof information for node
         dofx=DOFList[NodeID][0]
         dofy=DOFList[NodeID][1]
         x_res=RestraintList[NodeID][0]
@@ -284,7 +286,7 @@ def ID(Model,ElemDOF):
     return Uf[ElemDOF]
     
 def Uf_Gen(Model):
-    """Calculates unrestrained node matrix Uf"""
+    """Calculates unrestrained dof matrix Uf"""
     DOFList=Model.DOFList # Extracts DOF dict
     RestraintList=Model.RestraintList # Extracts restraint dict
     FreeDOFList={} # Takes {global DOF: free DOF}
@@ -330,9 +332,9 @@ def LM(Model,ElemE,dof):
         xcoord=x2
         ycoord=y2
         dofmod=dof-2
-    for key in Model.NodeList: # Iterate global nodes
-        xNode=Model.NodeList[key][0]
-        yNode=Model.NodeList[key][1]
+    for key in Model.NodeCoords: # Iterate global nodes
+        xNode=Model.NodeCoords[key][0]
+        yNode=Model.NodeCoords[key][1]
         if xNode==xcoord and yNode==ycoord:
             LMval=Model.DOFList[key][dofmod-1]
     return LMval
@@ -341,50 +343,52 @@ def LM(Model,ElemE,dof):
 def Solver(Model):
     """Solves linear equations using SciPy linalg"""
     MatrixList=SubAsmblGK(Model) 
-    # Outputs[GKff,GKfs,GKsf,GKss,ff,Us,UfNodes,UsNodes]
+    # Outputs[GKff,GKfs,GKsf,GKss,ff,Us,UfDOF,UsDOF]
         # Extract matrices for solving
-    GlobalNodeList=Model.NodeList
     GKff=MatrixList[0]
     GKfs=MatrixList[1]
     GKsf=MatrixList[2]
     GKss=MatrixList[3]
     ff=MatrixList[4]
+    print("ff",np.shape(ff))
     Us=MatrixList[5]
-    UfNodes=MatrixList[6]
-    UsNodes=MatrixList[7]
+    UfDOFs=MatrixList[6]
+    UsDOFs=MatrixList[7]
         # Calculate Pf (free node forces including prescribed displ)
     mult1=np.dot(GKfs,Us)
     Pf=ff-mult1
+    Pf=np.reshape(Pf,(-1,1)) # make column vector
         # Use SciPy linalg to obtain free node displacements
+    print("GKff",GKff,np.shape(GKff))
+    print("Pf",np.shape(Pf))
+    print("cond",np.linalg.cond(GKff))
+    print("det",np.linalg.det(GKff))
+    print("inv",np.linalg.inv(GKff))
     Uf=sp_linalg.solve(GKff,Pf)
+    print("Uf",np.shape(Uf))
         # Calculate reactions
-    Uf=np.reshape(Uf,(-1,1))
     fs=np.dot(GKsf,Uf)+np.dot(GKss,Us)
-        # Create nodal dictionaries to contain results
-    NodeReaction={}
-    AllNodeF={}
-    NodeDispl={}
-    AllNodeDispl={}
-    for k in GlobalNodeList: # initialise result dicts with keys and zero vals
-        NodeReaction[k]=0
-        AllNodeF[k]=0
-        NodeDispl[k]=0
-        AllNodeDispl[k]=0
-    for i in range(0,len(UfNodes)): # iterate free result nodes
-        NodeID=UfNodes[i]
-        uf=Uf[i][0]
-        NodeDispl[NodeID]+=uf
-        AllNodeDispl[NodeID]+=uf
-        f_x=ff[i]
-        AllNodeF[NodeID]+=f_x
-    for j in range(0,len(UsNodes)): # iterate support reaction results    
-        NodeID=UsNodes[j]
-        us=Us[j]
-        AllNodeDispl[NodeID]+=us
-        r_x=fs[j][0]
-        NodeReaction[NodeID]+=r_x
-        AllNodeF[NodeID]+=r_x
-    return [AllNodeDispl,AllNodeF]
+    print("fs",np.shape(fs))
+        # Associate results with nodes {NodeID:[dof1,dof2]}
+    NodeReactions={}
+    NodeDisplacements={}
+    for key in Model.DOFList: # Initialise result dicts
+        NodeReactions[key]=[0,0]
+        NodeDisplacements[key]=[0,0]
+    for key in Model.DOFList: # Iterate nodes/g_dofs
+        g_dof1=Model.DOFList[key][0]
+        g_dof2=Model.DOFList[key][1]
+        for i in range(0,len(UsDOFs)): # Iterate restrained g_dofs
+            if UsDOFs[i]==g_dof1:
+                NodeReactions[key][0]+=fs[i]
+            elif UsDOFs[i]==g_dof2:
+                NodeReactions[key][1]+=fs[i]
+        for j in range(0,len(UfDOFs)): # Iterate unrestrained g_dofs
+            if UfDOFs[j]==g_dof1:
+                NodeDisplacements[key][0]+=Uf[j]
+            elif UfDOFs[j]==g_dof2:
+                NodeDisplacements[key][1]+=Uf[j]
+    return Uf
 
 """
 --------------------------------------------------------------------------
@@ -403,9 +407,8 @@ Node3=ModelBuilder.AddNode(Model1,3,0,80)
 AddElem1=ModelBuilder.AddElement(Model1,1,3e4,1,1,2)
 AddElem2=ModelBuilder.AddElement(Model1,2,3e4,2,2,3)
 #AddElem3=ModelBuilder.AddElement(Model1,1,2e8,0.0025,1,3)
-Elem1=TrussElement(1,3e4,1,0,0,120,0)
-Elem2=TrussElement(2,3e4,2,120,0,0,80)
-#Elem3=TrussElement(3,2e8,0.0025,0,0,5,5)
+#Elem1=TrussElement(1,3e4,1,0,0,120,0)
+#Elem2=TrussElement(2,3e4,2,120,0,0,80)
 "Define Restraints"
 Res1=ModelBuilder.AddRestraint(Model1,1,'*','*')
 Res2=ModelBuilder.AddRestraint(Model1,3,'*','*')
@@ -414,16 +417,6 @@ Res2=ModelBuilder.AddRestraint(Model1,3,'*','*')
 "Define Loading"
 P1=ModelBuilder.AddNodeLoad(Model1,2,0,-10)
 
-#print(AsmblGK(Model1))
-#print(SubAsmblGK(Model1))
-#print(Solver(Model1))
-
-print(Model1.DOFList)
-#print(LM(Model1,Elem2,3))
-#print(AsmblGK(Model1))
-print(Uf_Gen(Model1))
-print(Model1.RestraintList)
 
 print('----------------------------------------------')
-Uf=(Uf_Gen(Model1)) # Returns free node dict with zeros
-print(np.array(list(Uf.values())))
+print(Solver(Model1))
